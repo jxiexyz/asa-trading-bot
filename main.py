@@ -150,7 +150,7 @@ async def check_positions_loop():
         async with aiohttp.ClientSession() as session:
             from bot.scanner import get_token_by_address
             for addr in held_addresses:
-                token_data = await get_token_by_address(session, addr)
+                token_data = await get_token_by_address(session, addr, skip_filter=True)
                 if token_data:
                     prices[addr] = token_data["price_usd"]
 
@@ -198,7 +198,7 @@ async def check_positions_loop():
             addr = pos["token_address"]
             if addr not in prices:
                 continue
-            token_data = await get_token_by_address(session, addr)
+            token_data = await get_token_by_address(session, addr, skip_filter=True)
             if not token_data:
                 continue
             ai_result = analyze_exit(pos, token_data)
@@ -284,7 +284,7 @@ async def check_positions_loop():
 
 
 async def send_periodic_summary():
-    """Kirim summary setiap 30 menit"""
+    """Kirim summary setiap 1 jam"""
     from bot.risk import get_positions
     import aiohttp
     from bot.scanner import get_token_by_address
@@ -294,7 +294,7 @@ async def send_periodic_summary():
         balance = await trader.get_wallet_balance()
 
         msg = (
-            f"📊 *Update 30 Menit*\n"
+            f"📊 *Update 1 Jam*\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"💰 Balance: `{balance:.4f} SOL`\n"
             f"📍 Posisi aktif: `{len(positions)}`\n\n"
@@ -303,7 +303,7 @@ async def send_periodic_summary():
         if positions:
             async with aiohttp.ClientSession() as session:
                 for pos in positions:
-                    current = await get_token_by_address(session, pos["token_address"])
+                    current = await get_token_by_address(session, pos["token_address"], skip_filter=True)
                     cur_price = current["price_usd"] if current else 0
                     entry = pos["entry_price"]
                     if entry and cur_price:
@@ -355,7 +355,7 @@ async def main():
         await auto_scan_and_trade()
         await check_positions_loop()
         summary_counter += 1
-        if summary_counter >= 15:  # 15 x 1 menit = 15 menit
+        if summary_counter >= 60:  # 60 x 1 menit = 1 jam
             await send_periodic_summary()
             summary_counter = 0
         await asyncio.sleep(60)

@@ -164,7 +164,7 @@ async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             msg = f"📈 *Posisi Aktif ({len(positions)}):*\n\n"
             async with aiohttp.ClientSession() as session:
                 for pos in positions:
-                    current = await get_token_by_address(session, pos["token_address"])
+                    current = await get_token_by_address(session, pos["token_address"], skip_filter=True)
                     cur_price = current["price_usd"] if current else 0
                     entry = pos["entry_price"]
                     if entry and cur_price:
@@ -274,7 +274,7 @@ async def handle_agent_message(update, ctx):
     import aiohttp
     async with aiohttp.ClientSession() as session:
         for pos in positions:
-            current = await get_token_by_address(session, pos["token_address"])
+            current = await get_token_by_address(session, pos["token_address"], skip_filter=True)
             if current:
                 pos["current_price"] = current["price_usd"]
                 entry = pos["entry_price"]
