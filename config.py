@@ -8,6 +8,8 @@ class Config:
     CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "0"))
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     GROQ_MODEL = "llama-3.1-8b-instant"
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    OPENROUTER_MODEL = "qwen/qwen3.6-plus:free"
     RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
     WALLET_KEY = os.getenv("WALLET_PRIVATE_KEY")
     MAX_BUY_SOL = float(os.getenv("MAX_BUY_SOL", "0.1"))

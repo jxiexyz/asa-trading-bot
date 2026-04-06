@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 MAX_POSITIONS = 3  # default, bisa diubah via chat
 trader = TradingEngine()
 telegram_app = None
+event_log = []
+
+def log_event(msg: str):
+    import time
+    event_log.append(f"[{time.strftime('%H:%M')}] {msg}")
+    if len(event_log) > 100:
+        event_log.pop(0)
 
 def pre_filter(token: dict) -> bool:
     return (
@@ -62,6 +69,7 @@ async def auto_scan_and_trade():
 
             signal = analyze_token(token)
             logger.info(f"AI {token['symbol']}: {signal['signal']} ({signal['confidence']}%) | Risk: {signal['risk_level']}")
+            log_event(f"Scan {token['symbol']}: {signal['signal']} {signal['confidence']}% - {signal.get('reason','-')}")
 
             if (
                 signal["signal"] == "BUY" and
@@ -101,6 +109,7 @@ async def auto_scan_and_trade():
                     sig = result.get("signature", "")
                     estimated_tokens = int(amount / token["price_usd"]) if token["price_usd"] > 0 else 0
                     open_position(token["address"], token["symbol"], token["price_usd"], amount, estimated_tokens)
+                    log_event(f"BUY {token['symbol']} {amount} SOL @ ${token['price_usd']:.8f}")
                     await telegram_app.bot.send_message(
                         chat_id=Config.CHAT_ID,
                         text=(
@@ -122,6 +131,7 @@ async def auto_scan_and_trade():
                 else:
                     err = result.get("error", "unknown")
                     logger.error(f"❌ Buy gagal {token['symbol']}: {err}")
+                    log_event(f"BUY GAGAL {token['symbol']}: {err[:30]}")
                     await telegram_app.bot.send_message(
                         chat_id=Config.CHAT_ID,
                         text=f"❌ *Buy Gagal* {token['symbol']}\n`{err}`",
@@ -171,6 +181,7 @@ async def check_positions_loop():
                 key = f"profit_{milestone}"
                 if pct >= milestone and key not in sent:
                     sent.add(key)
+                    log_event(f"MILESTONE {symbol} +{milestone}% (now {pct:.1f}%)")
                     await telegram_app.bot.send_message(
                         chat_id=Config.CHAT_ID,
                         text=f"🚀 *{symbol}* baru aja naik *+{milestone}%!*\nSekarang: `+{pct:.1f}%` | Harga: `${current:.8f}`",
@@ -202,7 +213,18 @@ async def check_positions_loop():
             if not token_data:
                 continue
             ai_result = analyze_exit(pos, token_data)
-            if ai_result.get("sell") and ai_result.get("confidence", 0) >= 70:
+            # Makin tinggi profit, makin gampang trigger sell
+            current_price = prices[addr]
+            pct_now = ((current_price - pos["entry_price"]) / pos["entry_price"]) * 100
+            if pct_now >= 100:
+                exit_threshold = 40  # udah 2x lipat, gampang exit
+            elif pct_now >= 50:
+                exit_threshold = 50  # profit bagus, mulai sensitif
+            elif pct_now >= 30:
+                exit_threshold = 60  # mulai pantau ketat
+            else:
+                exit_threshold = 70  # default
+            if ai_result.get("sell") and ai_result.get("confidence", 0) >= exit_threshold:
                 current_price = prices[addr]
                 pct = ((current_price - pos["entry_price"]) / pos["entry_price"]) * 100
                 total_tokens = pos.get("amount_tokens", 0)
@@ -277,6 +299,7 @@ async def check_positions_loop():
                     parse_mode="Markdown"
                 )
                 close_position(pos["token_address"])
+                log_event(f"{reason} {pos['symbol']} {pct:+.1f}%")
                 logger.info(f"{emoji} {reason} {pos['symbol']} {pct:+.1f}%")
 
     except Exception as e:
@@ -316,6 +339,25 @@ async def send_periodic_summary():
             msg += "📭 Tidak ada posisi aktif\n"
 
         msg += f"\n🤖 Auto: {'🟢 ON' if state.auto_trade_enabled else '🔴 OFF'}"
+
+        # AI summary — cerita 1 jam terakhir
+        try:
+            from groq import Groq
+            from config import Config as Cfg
+            client = Groq(api_key=Cfg.GROQ_API_KEY)
+            pos_summary = ", ".join([f"{p['symbol']} {((prices_now.get(p['token_address'],p['entry_price'])-p['entry_price'])/p['entry_price']*100):+.1f}%" for p in positions]) if positions else "tidak ada posisi"
+            events_text = "\n".join(event_log[-30:]) if event_log else "Tidak ada aktivitas tercatat"
+            ai_resp = client.chat.completions.create(
+                model=Cfg.GROQ_MODEL,
+                messages=[{"role": "user", "content": "1 kalimat kondisi bot sekarang, bahasa gaul, max 15 kata."}],
+                max_tokens=40,
+                temperature=0.7
+            )
+            ai_note = ai_resp.choices[0].message.content.strip()
+            msg += f"\n\n💬 _{ai_note}_"
+            event_log.clear()
+        except:
+            pass
 
         await telegram_app.bot.send_message(
             chat_id=Config.CHAT_ID,

@@ -204,6 +204,10 @@ async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         net_emoji = "🟢" if s["net_pnl"] >= 0 else "🔴"
         msg = "📊 *Summary All-Time*\n"
         msg += "━━━━━━━━━━━━━━━━\n"
+        from solders.keypair import Keypair
+        kp = Keypair.from_base58_string(Config.WALLET_KEY)
+        wallet_addr = str(kp.pubkey())
+        msg += f"👛 Wallet: `{wallet_addr[:4]}...{wallet_addr[-4:]}`\n"
         msg += f"💼 Total Trade: `{s['total_trades']}`\n"
         msg += f"📈 Posisi Aktif: `{s['active_positions']}`\n\n"
         msg += f"🟢 Profit: `{s['win_count']}`\n"
@@ -224,29 +228,106 @@ async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 msg += f"{emoji} *{t['symbol']}* {t['action']} `{t['amount_sol']:.4f}` SOL\n"
                 msg += f"  `{t['timestamp'][:16]}`\n\n"
         await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=main_keyboard())
+    elif data == "back_main":
+        await query.edit_message_text("🏠 Menu utama", reply_markup=main_keyboard())
+
     elif data == "config":
-        msg = (
-            "⚙️ *Konfigurasi Bot:*\n"
-            f"💰 Max Buy: `{Config.MAX_BUY_SOL} SOL`\n"
-            f"🛑 Stop Loss: `{Config.STOP_LOSS_PCT}%`\n"
-            f"🎯 Take Profit: `{Config.TAKE_PROFIT_PCT}%`\n"
-            f"💧 Min Liquidity: `${Config.MIN_LIQUIDITY:,.0f}`\n"
-            f"📊 Min Volume: `${Config.MIN_VOLUME:,.0f}`\n"
-            f"⏱ Scan: `{Config.SCAN_INTERVAL}s`\n"
-            f"🧠 Model: `{Config.GROQ_MODEL}`"
+        await show_config_menu(query)
+
+    elif data.startswith("cfg_edit_"):
+        key = data.replace("cfg_edit_", "")
+        labels = {
+            "MAX_BUY_SOL": "Max Buy (SOL), contoh: 0.01",
+            "STOP_LOSS_PCT": "Stop Loss (%), contoh: 20",
+            "TAKE_PROFIT_PCT": "Take Profit (%), contoh: 50",
+            "MIN_LIQUIDITY": "Min Liquidity (USD), contoh: 10000",
+            "MIN_VOLUME": "Min Volume (USD), contoh: 5000",
+            "MAX_POSITIONS": "Max Posisi, contoh: 3",
+        }
+        label = labels.get(key, key)
+        pending_config[query.from_user.id] = key
+        await query.edit_message_text(
+            f"⚙️ *Edit {key}*\n\nKirim nilai baru untuk:\n_{label}_\n\nAtau ketik /cancel untuk batal.",
+            parse_mode="Markdown"
         )
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=main_keyboard())
+
+# Nyimpen state edit config per user
+pending_config = {}
+
+def config_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    buttons = [
+        [InlineKeyboardButton(f"💰 Max Buy: {Config.MAX_BUY_SOL} SOL", callback_data="cfg_edit_MAX_BUY_SOL")],
+        [InlineKeyboardButton(f"🛑 Stop Loss: {Config.STOP_LOSS_PCT}%", callback_data="cfg_edit_STOP_LOSS_PCT"),
+         InlineKeyboardButton(f"🎯 Take Profit: {Config.TAKE_PROFIT_PCT}%", callback_data="cfg_edit_TAKE_PROFIT_PCT")],
+        [InlineKeyboardButton(f"💧 Min Liq: ${Config.MIN_LIQUIDITY:,.0f}", callback_data="cfg_edit_MIN_LIQUIDITY"),
+         InlineKeyboardButton(f"📊 Min Vol: ${Config.MIN_VOLUME:,.0f}", callback_data="cfg_edit_MIN_VOLUME")],
+        [InlineKeyboardButton(f"📍 Max Posisi: 3", callback_data="cfg_edit_MAX_POSITIONS")],
+        [InlineKeyboardButton("🔙 Kembali", callback_data="back_main")],
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+async def show_config_menu(query):
+    msg = (
+        "⚙️ *Konfigurasi Bot*\n"
+        "━━━━━━━━━━━━━━━━\n"
+        f"💰 Max Buy: `{Config.MAX_BUY_SOL} SOL`\n"
+        f"🛑 Stop Loss: `{Config.STOP_LOSS_PCT}%`\n"
+        f"🎯 Take Profit: `{Config.TAKE_PROFIT_PCT}%`\n"
+        f"💧 Min Liquidity: `${Config.MIN_LIQUIDITY:,.0f}`\n"
+        f"📊 Min Volume: `${Config.MIN_VOLUME:,.0f}`\n"
+        f"🧠 Model: `{Config.GROQ_MODEL}`\n\n"
+        "_Tap tombol di bawah untuk edit nilai_"
+    )
+    await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=config_keyboard())
+
+async def cmd_cancel(update, ctx):
+    user_id = update.effective_user.id
+    if user_id in pending_config:
+        pending_config.pop(user_id, None)
+        await update.message.reply_text("❌ Edit config dibatalkan.", reply_markup=main_keyboard())
+    else:
+        await update.message.reply_text("Tidak ada yang perlu dibatalkan.", reply_markup=main_keyboard())
 
 def setup_bot() -> Application:
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_agent_message))
     return app
 
 async def handle_agent_message(update, ctx):
     """Handle pesan biasa sebagai AI agent chat"""
+    from main import MAX_POSITIONS
+    import main as main_module
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # Cek apakah user lagi nunggu input config
+    # Cek apakah user lagi nunggu input config
+    if user_id in pending_config:
+        raw = update.message.text.strip()
+        if raw.lower() in ["/cancel", "cancel", "batal"]:
+            pending_config.pop(user_id, None)
+            await update.message.reply_text("❌ Edit config dibatalkan.", reply_markup=main_keyboard())
+            return
+        key = pending_config.pop(user_id)
+        try:
+            value = float(raw)
+            if key == "MAX_POSITIONS":
+                import main as _main
+                _main.MAX_POSITIONS = int(value)
+                reply = f"✅ *MAX_POSITIONS* diubah ke `{int(value)}`"
+            else:
+                setattr(Config, key, value)
+                reply = f"✅ *{key}* diubah ke `{value}`"
+            await update.message.reply_text(reply, parse_mode="Markdown", reply_markup=main_keyboard())
+        except ValueError:
+            pending_config[user_id] = key
+            await update.message.reply_text("❌ Harus angka. Coba lagi atau ketik /cancel untuk batal.")
+        return
     from telegram.ext import ContextTypes
     chat_id = update.effective_chat.id
     if chat_id != Config.CHAT_ID:

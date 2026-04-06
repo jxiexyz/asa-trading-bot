@@ -4,6 +4,11 @@ async def get_portfolio_summary(wallet_balance: float) -> str:
     positions = get_positions()
     msg = "📊 *Portfolio Monitor*\n"
     msg += f"━━━━━━━━━━━━━━━━\n"
+    from config import Config
+    from solders.keypair import Keypair
+    kp = Keypair.from_base58_string(Config.WALLET_KEY)
+    wallet_addr = str(kp.pubkey())
+    msg += f"👛 Wallet: `{wallet_addr[:4]}...{wallet_addr[-4:]}`\n"
     msg += f"💰 Balance: `{wallet_balance:.4f} SOL`\n\n"
     if not positions:
         msg += "📭 Tidak ada posisi aktif\n"
